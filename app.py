@@ -4,10 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.express as px
-from scipy import optimize, integrate
-from scipy.stats import norm, t
-import yfinance as yf
-from datetime import datetime, timedelta
+from scipy import optimize
+from scipy.stats import norm
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -19,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Titre principal avec style industriel
+# CSS personnalisé
 st.markdown("""
 <style>
 .main-header {
@@ -36,9 +34,16 @@ st.markdown("""
     border-radius: 10px;
     border-left: 4px solid #048A81;
 }
+.stMetric {
+    background-color: #f8f9fa;
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid #e9ecef;
+}
 </style>
 """, unsafe_allow_html=True)
 
+# Titre principal
 st.markdown('<div class="main-header"><h1>⚒️ CommodiPhys - Trading Physique des Matières Premières</h1><p>Modèles physiques appliqués au négoce de métaux, énergie et agriculture</p></div>', unsafe_allow_html=True)
 
 # Sidebar pour la navigation
@@ -54,30 +59,26 @@ section = st.sidebar.selectbox(
     ]
 )
 
-# Dictionnaire des commodités avec leurs tickers
-COMMODITIES = {
-    'Cuivre': 'HG=F',
-    'Aluminium': 'ALI=F', 
-    'Zinc': 'ZN=F',
-    'Pétrole Brent': 'BZ=F',
-    'Pétrole WTI': 'CL=F',
-    'Gaz Naturel': 'NG=F',
-    'Or': 'GC=F',
-    'Argent': 'SI=F',
-    'Blé': 'ZW=F',
-    'Maïs': 'ZC=F',
-    'Charbon': 'MTF=F'
+# Dictionnaire des commodités simulées (données fictives pour la démo)
+COMMODITIES_DATA = {
+    'Cuivre': {'price': 8500, 'volatility': 0.25, 'trend': 0.05},
+    'Aluminium': {'price': 2100, 'volatility': 0.20, 'trend': 0.02}, 
+    'Zinc': {'price': 2800, 'volatility': 0.30, 'trend': -0.01},
+    'Pétrole Brent': {'price': 85, 'volatility': 0.35, 'trend': 0.08},
+    'Pétrole WTI': {'price': 80, 'volatility': 0.33, 'trend': 0.07},
+    'Gaz Naturel': {'price': 3.2, 'volatility': 0.45, 'trend': 0.12},
+    'Or': {'price': 2050, 'volatility': 0.15, 'trend': 0.03},
+    'Argent': {'price': 25, 'volatility': 0.28, 'trend': 0.04},
+    'Blé': {'price': 550, 'volatility': 0.22, 'trend': 0.01},
+    'Maïs': {'price': 420, 'volatility': 0.24, 'trend': 0.02}
 }
 
-@st.cache_data
-def get_commodity_data(ticker, period="2y"):
-    """Récupération des données de commodités"""
-    try:
-        commodity = yf.Ticker(ticker)
-        data = commodity.history(period=period)
-        return data
-    except:
-        return None
+def generate_price_series(base_price, volatility, trend, days=252):
+    """Génère une série de prix simulée"""
+    np.random.seed(42)
+    returns = np.random.normal(trend/252, volatility/np.sqrt(252), days)
+    prices = base_price * np.cumprod(1 + returns)
+    return prices
 
 def ornstein_uhlenbeck_simulation(S0, theta, mu, sigma, T, N, M):
     """Processus d'Ornstein-Uhlenbeck pour mean reversion des commodités"""
@@ -110,69 +111,11 @@ def jump_diffusion_model(S0, mu, sigma, lambda_jump, jump_mean, jump_std, T, N, 
     
     return paths
 
-def convenience_yield_model(spot_price, futures_prices, time_to_maturity, risk_free_rate):
-    """Calcul du convenience yield pour stockage physique"""
-    convenience_yields = []
-    for i, (future_price, T) in enumerate(zip(futures_prices, time_to_maturity)):
-        if T > 0:
-            cy = risk_free_rate + (1/T) * np.log(spot_price/future_price)
-            convenience_yields.append(cy)
-        else:
-            convenience_yields.append(0)
-    return np.array(convenience_yields)
-
-def storage_cost_optimization(demand_forecast, storage_capacity, storage_cost_per_unit, 
-                            purchase_prices, selling_prices):
-    """Optimisation des coûts de stockage physique"""
-    n_periods = len(demand_forecast)
-    
-    # Variables de décision: achats, ventes, stock
-    from scipy.optimize import minimize
-    
-    def objective(x):
-        purchases = x[:n_periods]
-        sales = x[n_periods:2*n_periods]
-        storage = x[2*n_periods:3*n_periods]
-        
-        # Coût total = coûts d'achat + coûts de stockage - revenus de vente
-        total_cost = (np.sum(purchases * purchase_prices) + 
-                     np.sum(storage * storage_cost_per_unit) - 
-                     np.sum(sales * selling_prices))
-        return total_cost
-    
-    # Contraintes
-    constraints = []
-    bounds = []
-    
-    # Bornes pour toutes les variables (non-négatives)
-    for i in range(3*n_periods):
-        bounds.append((0, None))
-    
-    # Contrainte de capacité de stockage
-    for i in range(n_periods):
-        constraints.append({
-            'type': 'ineq',
-            'fun': lambda x, i=i: storage_capacity - x[2*n_periods + i]
-        })
-    
-    # Point de départ
-    x0 = np.ones(3*n_periods) * 10
-    
-    try:
-        result = minimize(objective, x0, method='SLSQP', bounds=bounds, constraints=constraints)
-        return result
-    except:
-        return None
-
-def thermal_equilibrium_pricing(temperature_data, energy_prices, base_demand):
+def thermal_equilibrium_pricing(temperature_data, energy_prices, base_temp=20):
     """Modèle thermodynamique pour pricing de l'énergie"""
-    # Relation entre température et demande énergétique (chauffage/climatisation)
-    temp_deviation = np.abs(temperature_data - 20)  # Température de confort 20°C
-    demand_multiplier = 1 + 0.02 * temp_deviation  # 2% d'augmentation par degré d'écart
-    
-    # Prix d'équilibre basé sur la demande thermodynamique
+    temp_deviation = np.abs(temperature_data - base_temp)
+    demand_multiplier = 1 + 0.02 * temp_deviation
     equilibrium_prices = energy_prices * demand_multiplier
-    
     return equilibrium_prices, demand_multiplier
 
 # Interface principale selon la section sélectionnée
@@ -184,95 +127,87 @@ if section == "🔥 Thermodynamique des Prix Énergie":
     with col1:
         st.subheader("Paramètres du Modèle")
         
-        # Sélection de la commodité énergétique
         energy_commodity = st.selectbox(
             "Commodité Énergétique",
-            ["Pétrole Brent", "Pétrole WTI", "Gaz Naturel", "Charbon"]
+            ["Pétrole Brent", "Pétrole WTI", "Gaz Naturel"]
         )
         
-        # Paramètres thermodynamiques
         base_temp = st.slider("Température de référence (°C)", 15, 25, 20)
         sensitivity = st.slider("Sensibilité thermique (%/°C)", 1, 5, 2)
-        
-        # Simulation de données météo
         days = st.slider("Période d'analyse (jours)", 30, 365, 90)
         
     with col2:
-        # Récupération des données
-        ticker = COMMODITIES[energy_commodity]
-        data = get_commodity_data(ticker, "1y")
+        # Génération des données simulées
+        commodity_data = COMMODITIES_DATA[energy_commodity]
+        base_price = commodity_data['price']
         
-        if data is not None and len(data) > 0:
-            # Simulation de données de température
-            np.random.seed(42)
-            dates = pd.date_range(start=data.index[-days], periods=days, freq='D')
-            temperatures = 15 + 10 * np.sin(2 * np.pi * np.arange(days) / 365) + np.random.normal(0, 3, days)
-            
-            # Calcul des prix d'équilibre thermodynamique
-            recent_prices = data['Close'].iloc[-days:].values
-            if len(recent_prices) < days:
-                recent_prices = np.repeat(recent_prices[-1], days)
-            
-            equilibrium_prices, demand_mult = thermal_equilibrium_pricing(
-                temperatures, recent_prices, base_demand=100
-            )
-            
-            # Graphique principal
-            fig = make_subplots(
-                rows=2, cols=1,
-                subplot_titles=["Prix vs Température", "Multiplicateur de Demande"],
-                specs=[[{"secondary_y": True}], [{}]]
-            )
-            
-            # Prix et température
-            fig.add_trace(
-                go.Scatter(x=dates, y=recent_prices, name="Prix Réel", line=dict(color='blue')),
-                row=1, col=1
-            )
-            fig.add_trace(
-                go.Scatter(x=dates, y=equilibrium_prices, name="Prix Équilibre Thermique", 
-                          line=dict(color='red', dash='dash')),
-                row=1, col=1
-            )
-            fig.add_trace(
-                go.Scatter(x=dates, y=temperatures, name="Température (°C)", 
-                          line=dict(color='orange'), yaxis="y2"),
-                row=1, col=1, secondary_y=True
-            )
-            
-            # Multiplicateur de demande
-            fig.add_trace(
-                go.Scatter(x=dates, y=demand_mult, name="Multiplicateur Demande", 
-                          fill='tonexty', line=dict(color='green')),
-                row=2, col=1
-            )
-            
-            fig.update_layout(height=600, title=f"Analyse Thermodynamique - {energy_commodity}")
-            fig.update_yaxes(title_text="Prix USD", row=1, col=1)
-            fig.update_yaxes(title_text="Température °C", secondary_y=True, row=1, col=1)
-            fig.update_yaxes(title_text="Multiplicateur", row=2, col=1)
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Métriques clés
-            st.subheader("📊 Métriques Thermodynamiques")
-            col_a, col_b, col_c, col_d = st.columns(4)
-            
-            with col_a:
-                avg_premium = np.mean(equilibrium_prices - recent_prices)
-                st.metric("Prime Thermique Moyenne", f"${avg_premium:.2f}")
-            
-            with col_b:
-                max_demand = np.max(demand_mult)
-                st.metric("Pic de Demande", f"{max_demand:.2f}x")
-            
-            with col_c:
-                temp_volatility = np.std(temperatures)
-                st.metric("Volatilité Température", f"{temp_volatility:.1f}°C")
-            
-            with col_d:
-                correlation = np.corrcoef(temperatures, recent_prices)[0,1]
-                st.metric("Corrélation T°/Prix", f"{correlation:.3f}")
+        # Simulation de données de température
+        np.random.seed(42)
+        dates = pd.date_range(start='2024-01-01', periods=days, freq='D')
+        temperatures = 15 + 10 * np.sin(2 * np.pi * np.arange(days) / 365) + np.random.normal(0, 3, days)
+        
+        # Prix simulés
+        prices = generate_price_series(base_price, commodity_data['volatility'], commodity_data['trend'], days)
+        
+        # Calcul des prix d'équilibre thermodynamique
+        equilibrium_prices, demand_mult = thermal_equilibrium_pricing(temperatures, prices, base_temp)
+        
+        # Graphique principal
+        fig = make_subplots(
+            rows=2, cols=1,
+            subplot_titles=["Prix vs Température", "Multiplicateur de Demande"],
+            specs=[[{"secondary_y": True}], [{}]]
+        )
+        
+        # Prix et température
+        fig.add_trace(
+            go.Scatter(x=dates, y=prices, name="Prix Réel", line=dict(color='blue')),
+            row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=dates, y=equilibrium_prices, name="Prix Équilibre Thermique", 
+                      line=dict(color='red', dash='dash')),
+            row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=dates, y=temperatures, name="Température (°C)", 
+                      line=dict(color='orange'), yaxis="y2"),
+            row=1, col=1, secondary_y=True
+        )
+        
+        # Multiplicateur de demande
+        fig.add_trace(
+            go.Scatter(x=dates, y=demand_mult, name="Multiplicateur Demande", 
+                      fill='tonexty', line=dict(color='green')),
+            row=2, col=1
+        )
+        
+        fig.update_layout(height=600, title=f"Analyse Thermodynamique - {energy_commodity}")
+        fig.update_yaxes(title_text="Prix", row=1, col=1)
+        fig.update_yaxes(title_text="Température °C", secondary_y=True, row=1, col=1)
+        fig.update_yaxes(title_text="Multiplicateur", row=2, col=1)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Métriques clés
+        st.subheader("📊 Métriques Thermodynamiques")
+        col_a, col_b, col_c, col_d = st.columns(4)
+        
+        with col_a:
+            avg_premium = np.mean(equilibrium_prices - prices)
+            st.metric("Prime Thermique Moyenne", f"${avg_premium:.2f}")
+        
+        with col_b:
+            max_demand = np.max(demand_mult)
+            st.metric("Pic de Demande", f"{max_demand:.2f}x")
+        
+        with col_c:
+            temp_volatility = np.std(temperatures)
+            st.metric("Volatilité Température", f"{temp_volatility:.1f}°C")
+        
+        with col_d:
+            correlation = np.corrcoef(temperatures, prices)[0,1]
+            st.metric("Corrélation T°/Prix", f"{correlation:.3f}")
 
 elif section == "⚡ Modèle de Diffusion Métaux":
     st.header("⚡ Modèle de Diffusion avec Sauts - Métaux")
@@ -285,7 +220,8 @@ elif section == "⚡ Modèle de Diffusion Métaux":
         metal = st.selectbox("Métal", ["Cuivre", "Aluminium", "Zinc", "Or", "Argent"])
         
         # Paramètres du modèle
-        S0 = st.number_input("Prix Initial", value=100.0, min_value=0.1)
+        commodity_data = COMMODITIES_DATA[metal]
+        S0 = st.number_input("Prix Initial", value=float(commodity_data['price']), min_value=0.1)
         mu = st.slider("Drift (μ)", -0.2, 0.3, 0.05)
         sigma = st.slider("Volatilité (σ)", 0.1, 0.8, 0.25)
         lambda_jump = st.slider("Fréquence des Sauts", 0.0, 5.0, 1.0)
@@ -301,7 +237,7 @@ elif section == "⚡ Modèle de Diffusion Métaux":
     with col2:
         if hasattr(st.session_state, 'run_metal_sim') and st.session_state.run_metal_sim:
             # Simulation du modèle de diffusion avec sauts
-            N = int(T * 252)  # Pas journaliers
+            N = int(T * 252)
             paths = jump_diffusion_model(S0, mu, sigma, lambda_jump, jump_mean, jump_std, T, N, n_sims)
             
             # Graphique des trajectoires
@@ -380,18 +316,14 @@ elif section == "🌊 Dynamique des Flux Logistiques":
     with col1:
         st.subheader("Paramètres Logistiques")
         
-        # Paramètres de stockage
         storage_capacity = st.number_input("Capacité Stockage (tonnes)", 1000, 50000, 10000)
         storage_cost = st.number_input("Coût Stockage ($/tonne/mois)", 1, 50, 10)
         
-        # Prévisions de demande
         st.subheader("Prévisions de Demande")
         n_months = st.slider("Horizon (mois)", 3, 12, 6)
-        
         base_demand = st.number_input("Demande de Base (tonnes/mois)", 1000, 10000, 5000)
         seasonality = st.slider("Saisonnalité (%)", 0, 50, 20)
         
-        # Prix
         base_price = st.number_input("Prix de Base ($/tonne)", 1000, 10000, 5000)
         price_volatility = st.slider("Volatilité Prix (%)", 5, 30, 15)
     
@@ -408,9 +340,8 @@ elif section == "🌊 Dynamique des Flux Logistiques":
         price_changes = np.random.normal(0, price_volatility/100, n_months)
         prices = base_price * np.cumprod(1 + price_changes)
         
-        # Optimisation simple (version déterministe)
-        purchase_costs = prices * 0.98  # Légère décote à l'achat
-        selling_prices = prices * 1.02  # Prime à la vente
+        purchase_costs = prices * 0.98
+        selling_prices = prices * 1.02
         
         # Graphique des prévisions
         fig = make_subplots(
@@ -454,7 +385,7 @@ elif section == "🌊 Dynamique des Flux Logistiques":
         
         st.plotly_chart(fig, use_container_width=True)
         
-        # Calcul des métriques de performance
+        # Calcul des métriques
         total_demand = np.sum(demand_forecast)
         avg_price = np.mean(prices)
         price_trend = (prices[-1] - prices[0]) / prices[0] * 100
@@ -475,7 +406,7 @@ elif section == "🌊 Dynamique des Flux Logistiques":
         with col_d:
             st.metric("Tendance Prix", f"{price_trend:+.1f}%")
         
-        # Recommandations stratégiques
+        # Recommandations
         st.subheader("🎯 Recommandations Stratégiques")
         
         if price_trend > 10:
@@ -484,20 +415,13 @@ elif section == "🌊 Dynamique des Flux Logistiques":
             st.warning("📉 **Stratégie**: Déstockage recommandé - Tendance baissière")
         else:
             st.info("⚖️ **Stratégie**: Maintien des stocks - Marché stable")
-        
-        # Analyse de la saisonnalité
-        peak_month = np.argmax(demand_forecast) + 1
-        low_month = np.argmin(demand_forecast) + 1
-        
-        st.write(f"**Saisonnalité**: Pic de demande en mois {peak_month}, creux en mois {low_month}")
 
 elif section == "📊 Optimisation Portfolio Physique":
     st.header("📊 Optimisation de Portfolio Physique Multi-Commodités")
     
-    # Sélection des commodités pour le portfolio
     selected_commodities = st.multiselect(
         "Sélectionner les Commodités",
-        list(COMMODITIES.keys()),
+        list(COMMODITIES_DATA.keys()),
         default=["Cuivre", "Or", "Pétrole Brent"]
     )
     
@@ -507,145 +431,444 @@ elif section == "📊 Optimisation Portfolio Physique":
         with col1:
             st.subheader("Paramètres d'Optimisation")
             
-            # Contraintes de capital
             total_capital = st.number_input("Capital Total ($M)", 10, 1000, 100)
             min_allocation = st.slider("Allocation Minimale (%)", 0, 20, 5)
             max_allocation = st.slider("Allocation Maximale (%)", 50, 100, 40)
             
-            # Horizon d'investissement
-            investment_horizon = st.selectbox("Horizon", ["1 mois", "3 mois", "6 mois", "1 an"])
-            horizon_map = {"1 mois": "1mo", "3 mois": "3mo", "6 mois": "6mo", "1 an": "1y"}
-            
-            # Objectif d'optimisation
             objective = st.radio(
                 "Objectif",
                 ["Maximiser Rendement", "Minimiser Risque", "Ratio Sharpe"]
             )
         
         with col2:
-            # Récupération des données pour toutes les commodités sélectionnées
+            # Génération de données de rendements simulées
             returns_data = {}
-            prices_data = {}
             
             for commodity in selected_commodities:
-                ticker = COMMODITIES[commodity]
-                data = get_commodity_data(ticker, "2y")
-                if data is not None and len(data) > 0:
-                    prices_data[commodity] = data['Close']
-                    returns_data[commodity] = data['Close'].pct_change().dropna()
+                data = COMMODITIES_DATA[commodity]
+                prices = generate_price_series(data['price'], data['volatility'], data['trend'], 252)
+                returns = np.diff(np.log(prices))
+                returns_data[commodity] = returns
             
-            if len(returns_data) >= 2:
-                # Création de la matrice de rendements
-                returns_df = pd.DataFrame(returns_data)
-                returns_df = returns_df.dropna()
+            # Création du DataFrame de rendements
+            returns_df = pd.DataFrame(returns_data)
+            
+            # Calcul des statistiques
+            mean_returns = returns_df.mean() * 252
+            cov_matrix = returns_df.cov() * 252
+            
+            # Simulation Monte Carlo pour l'optimisation
+            n_portfolios = 5000
+            np.random.seed(42)
+            n_assets = len(selected_commodities)
+            
+            results = np.zeros((4, n_portfolios))
+            
+            for i in range(n_portfolios):
+                weights = np.random.random(n_assets)
+                weights = weights / np.sum(weights)
                 
-                # Calcul des statistiques
-                mean_returns = returns_df.mean() * 252  # Annualisé
-                cov_matrix = returns_df.cov() * 252     # Annualisé
+                # Contraintes d'allocation
+                if np.any(weights < min_allocation/100) or np.any(weights > max_allocation/100):
+                    continue
                 
-                # Optimisation de Markowitz simplifiée
-                n_assets = len(selected_commodities)
+                portfolio_return = np.sum(weights * mean_returns)
+                portfolio_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                sharpe_ratio = portfolio_return / portfolio_risk if portfolio_risk > 0 else 0
                 
-                # Simulation Monte Carlo pour l'optimisation
-                n_portfolios = 10000
-                np.random.seed(42)
-                
-                results = np.zeros((4, n_portfolios))
-                
-                for i in range(n_portfolios):
-                    # Génération de poids aléatoires
-                    weights = np.random.random(n_assets)
-                    weights = weights / np.sum(weights)  # Normalisation
-                    
-                    # Contraintes d'allocation
-                    if np.any(weights < min_allocation/100) or np.any(weights > max_allocation/100):
-                        continue
-                    
-                    # Calcul des métriques du portfolio
-                    portfolio_return = np.sum(weights * mean_returns)
-                    portfolio_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-                    sharpe_ratio = portfolio_return / portfolio_risk if portfolio_risk > 0 else 0
-                    
-                    results[0, i] = portfolio_return
-                    results[1, i] = portfolio_risk
-                    results[2, i] = sharpe_ratio
-                    results[3, i] = i
-                
-                # Filtrage des résultats valides
-                valid_indices = results[3, :] != 0
-                valid_results = results[:, valid_indices]
-                
-                if valid_results.shape[1] > 0:
-                    # Sélection du portfolio optimal selon l'objectif
-                    if objective == "Maximiser Rendement":
-                        optimal_idx = np.argmax(valid_results[0, :])
-                    elif objective == "Minimiser Risque":
-                        optimal_idx = np.argmin(valid_results[1, :])
-                    else:  # Ratio Sharpe
-                        optimal_idx = np.argmax(valid_results[2, :])
-                    
-                    optimal_return = valid_results[0, optimal_idx]
-                    optimal_risk = valid_results[1, optimal_idx]
-                    optimal_sharpe = valid_results[2, optimal_idx]
-                    
-                    # Graphique de la frontière efficiente
-                    fig = go.Figure()
-                    
-                    fig.add_trace(go.Scatter(
-                        x=valid_results[1, :], 
-                        y=valid_results[0, :],
-                        mode='markers',
-                        marker=dict(
-                            size=4,
-                            color=valid_results[2, :],
-                            colorscale='Viridis',
-                            colorbar=dict(title="Ratio Sharpe"),
-                            opacity=0.6
-                        ),
-                        name='Portfolios'
-                    ))
-                    
-                    fig.add_trace(go.Scatter(
-                        x=[optimal_risk], 
-                        y=[optimal_return],
-                        mode='markers',
-                        marker=dict(size=15, color='red', symbol='star'),
-                        name='Portfolio Optimal'
-                    ))
-                    
-                    fig.update_layout(
-                        title="Frontière Efficiente - Commodités",
-                        xaxis_title="Risque (Volatilité Annuelle)",
-                        yaxis_title="Rendement Attendu (Annuel)",
-                        height=500
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Métriques du portfolio optimal
-                    st.subheader("🎯 Portfolio Optimal")
-                    col_a, col_b, col_c = st.columns(3)
-                    
-                    with col_a:
-                        st.metric("Rendement Attendu", f"{optimal_return*100:.2f}%")
-                    with col_b:
-                        st.metric("Risque (Volatilité)", f"{optimal_risk*100:.2f}%")
-                    with col_c:
-                        st.metric("Ratio Sharpe", f"{optimal_sharpe:.3f}")
-                    
-                    # Matrice de corrélation
-                    st.subheader("🔗 Matrice de Corrélation")
-                    corr_matrix = returns_df.corr()
-                    
-                    fig_corr = px.imshow(
-                        corr_matrix,
-                        labels=dict(color="Corrélation"),
-                        color_continuous_scale="RdBu_r"
-                    )
-                    fig_corr.update_layout(title="Corrélations entre Commodités")
-                    st.plotly_chart(fig_corr, use_container_width=True)
-                    
+                results[0, i] = portfolio_return
+                results[1, i] = portfolio_risk
+                results[2, i] = sharpe_ratio
+                results[3, i] = i
+            
+            # Filtrage des résultats valides
+            valid_indices = results[3, :] != 0
+            valid_results = results[:, valid_indices]
+            
+            if valid_results.shape[1] > 0:
+                # Sélection du portfolio optimal
+                if objective == "Maximiser Rendement":
+                    optimal_idx = np.argmax(valid_results[0, :])
+                elif objective == "Minimiser Risque":
+                    optimal_idx = np.argmin(valid_results[1, :])
                 else:
-                    st.error("Aucun portfolio valide trouvé avec les contraintes spécifiées")
+                    optimal_idx = np.argmax(valid_results[2, :])
+                
+                optimal_return = valid_results[0, optimal_idx]
+                optimal_risk = valid_results[1, optimal_idx]
+                optimal_sharpe = valid_results[2, optimal_idx]
+                
+                # Graphique de la frontière efficiente
+                fig = go.Figure()
+                
+                fig.add_trace(go.Scatter(
+                    x=valid_results[1, :], 
+                    y=valid_results[0, :],
+                    mode='markers',
+                    marker=dict(
+                        size=4,
+                        color=valid_results[2, :],
+                        colorscale='Viridis',
+                        colorbar=dict(title="Ratio Sharpe"),
+                        opacity=0.6
+                    ),
+                    name='Portfolios'
+                ))
+                
+                fig.add_trace(go.Scatter(
+                    x=[optimal_risk], 
+                    y=[optimal_return],
+                    mode='markers',
+                    marker=dict(size=15, color='red', symbol='star'),
+                    name='Portfolio Optimal'
+                ))
+                
+                fig.update_layout(
+                    title="Frontière Efficiente - Commodités",
+                    xaxis_title="Risque (Volatilité Annuelle)",
+                    yaxis_title="Rendement Attendu (Annuel)",
+                    height=500
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Métriques du portfolio optimal
+                st.subheader("🎯 Portfolio Optimal")
+                col_a, col_b, col_c = st.columns(3)
+                
+                with col_a:
+                    st.metric("Rendement Attendu", f"{optimal_return*100:.2f}%")
+                with col_b:
+                    st.metric("Risque (Volatilité)", f"{optimal_risk*100:.2f}%")
+                with col_c:
+                    st.metric("Ratio Sharpe", f"{optimal_sharpe:.3f}")
+                
+                # Matrice de corrélation
+                st.subheader("🔗 Matrice de Corrélation")
+                corr_matrix = returns_df.corr()
+                
+                fig_corr = px.imshow(
+                    corr_matrix,
+                    labels=dict(color="Corrélation"),
+                    color_continuous_scale="RdBu_r"
+                )
+                fig_corr.update_layout(title="Corrélations entre Commodités")
+                st.plotly_chart(fig_corr, use_container_width=True)
             else:
-                st.error("Données
+                st.error("Aucun portfolio valide trouvé avec les contraintes spécifiées")
+    else:
+        st.warning("Veuillez sélectionner au moins 2 commodités pour l'optimisation de portfolio")
+
+elif section == "🎯 Arbitrage Géographique":
+    st.header("🎯 Arbitrage Géographique et Différentiels de Prix")
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("Paramètres d'Arbitrage")
+        
+        commodity = st.selectbox("Commodité", ["Pétrole Brent", "Pétrole WTI", "Gaz Naturel"])
+        
+        transport_cost = st.number_input("Coût Transport ($/unité)", 0.5, 20.0, 5.0)
+        transport_time = st.slider("Temps Transport (jours)", 1, 30, 7)
+        storage_cost_daily = st.number_input("Coût Stockage ($/unité/jour)", 0.01, 1.0, 0.1)
+        
+        financing_rate = st.slider("Taux de Financement (%)", 0.0, 10.0, 3.0) / 100
+        min_profit_margin = st.slider("Marge Minimum (%)", 0.5, 5.0, 1.0) / 100
+        
+    with col2:
+        if commodity in ["Pétrole Brent", "Pétrole WTI"]:
+            # Simulation des différentiels Brent vs WTI
+            np.random.seed(42)
+            days = 60
+            dates = pd.date_range(start='2024-01-01', periods=days, freq='D')
+            
+            brent_data = COMMODITIES_DATA["Pétrole Brent"]
+            wti_data = COMMODITIES_DATA["Pétrole WTI"]
+            
+            brent_prices = generate_price_series(brent_data['price'], brent_data['volatility'], brent_data['trend'], days)
+            wti_prices = generate_price_series(wti_data['price'], wti_data['volatility'], wti_data['trend'], days)
+            
+            # Calcul des opportunités d'arbitrage
+            price_differential = brent_prices - wti_prices
+            
+            total_costs = transport_cost + storage_cost_daily * transport_time + financing_rate * wti_prices * (transport_time/365)
+            
+            gross_profit = price_differential
+            net_profit = gross_profit - total_costs
+            arbitrage_opportunities = net_profit > (wti_prices * min_profit_margin)
+            
+            # Graphique principal
+            fig = make_subplots(
+                rows=3, cols=1,
+                subplot_titles=["Prix Brent vs WTI", "Différentiel de Prix", "Opportunités d'Arbitrage"],
+                vertical_spacing=0.08
+            )
+            
+            fig.add_trace(
+                go.Scatter(x=dates, y=brent_prices, name="Brent", line=dict(color='blue')),
+                row=1, col=1
+            )
+            fig.add_trace(
+                go.Scatter(x=dates, y=wti_prices, name="WTI", line=dict(color='red')),
+                row=1, col=1
+            )
+            
+            fig.add_trace(
+                go.Scatter(x=dates, y=price_differential, name="Différentiel Brent-WTI", 
+                          fill='tonexty', line=dict(color='green')),
+                row=2, col=1
+            )
+            fig.add_trace(
+                go.Scatter(x=dates, y=total_costs, name="Coûts d'Arbitrage", 
+                          line=dict(color='orange', dash='dash')),
+                row=2, col=1
+            )
+            
+            # Profit net
+            colors = ['green' if profit > 0 else 'red' for profit in net_profit]
+            fig.add_trace(
+                go.Bar(x=dates, y=net_profit, name="Profit Net", 
+                      marker_color=colors, opacity=0.7),
+                row=3, col=1
+            )
+            
+            fig.update_layout(height=700, title="Analyse d'Arbitrage Géographique - Pétrole")
+            fig.update_yaxes(title_text="Prix ($/baril)", row=1, col=1)
+            fig.update_yaxes(title_text="Différentiel ($/baril)", row=2, col=1)
+            fig.update_yaxes(title_text="Profit Net ($/baril)", row=3, col=1)
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Statistiques d'arbitrage
+            st.subheader("📊 Statistiques d'Arbitrage")
+            
+            profitable_days = np.sum(arbitrage_opportunities)
+            total_potential_profit = np.sum(net_profit[net_profit > 0])
+            avg_profit_per_opportunity = total_potential_profit / max(profitable_days, 1)
+            success_rate = profitable_days / days * 100
+            
+            col_a, col_b, col_c, col_d = st.columns(4)
+            
+            with col_a:
+                st.metric("Jours Profitables", f"{profitable_days}/{days}")
+            
+            with col_b:
+                st.metric("Taux de Succès", f"{success_rate:.1f}%")
+            
+            with col_c:
+                st.metric("Profit Total Potentiel", f"${total_potential_profit:.2f}")
+            
+            with col_d:
+                st.metric("Profit Moyen/Opportunité", f"${avg_profit_per_opportunity:.2f}")
+            
+            # Analyse des risques
+            st.subheader("⚠️ Analyse des Risques")
+            
+            max_loss = np.min(net_profit)
+            volatility_differential = np.std(price_differential)
+            correlation_coeff = np.corrcoef(brent_prices, wti_prices)[0,1]
+            
+            col_risk1, col_risk2 = st.columns(2)
+            
+            with col_risk1:
+                st.markdown(f"""
+                **Risques Identifiés:**
+                - Perte Maximum: ${max_loss:.2f}/baril
+                - Volatilité Différentiel: ${volatility_differential:.2f}
+                - Corrélation Prix: {correlation_coeff:.3f}
+                """)
+            
+            with col_risk2:
+                st.markdown(f"""
+                **Facteurs de Risque:**
+                - Changements géopolitiques
+                - Disruptions logistiques
+                - Variations de qualité
+                - Risques de contrepartie
+                """)
+            
+            # Recommandations
+            if success_rate > 60:
+                st.success("✅ **Recommandation**: Stratégie d'arbitrage attractive avec taux de succès élevé")
+            elif success_rate > 40:
+                st.warning("⚠️ **Recommandation**: Stratégie modérément attractive, surveiller les coûts")
+            else:
+                st.error("❌ **Recommandation**: Stratégie peu attractive, revoir les paramètres")
+
+        elif commodity == "Gaz Naturel":
+            st.subheader("🌍 Arbitrage Gaz Naturel - Différentiels Régionaux")
+            
+            # Simulation des prix régionaux
+            regions = ["Henry Hub (US)", "NBP (UK)", "TTF (NL)", "JKM (Asie)"]
+            base_prices = [3.5, 8.2, 7.8, 12.5]  # $/MMBtu
+            
+            np.random.seed(42)
+            days = 45
+            dates = pd.date_range(start='2024-01-01', periods=days, freq='D')
+            
+            regional_prices = {}
+            for i, region in enumerate(regions):
+                volatility = 0.03
+                trend = 0.0
+                prices = generate_price_series(base_prices[i], volatility, trend, days)
+                regional_prices[region] = prices
+            
+            # Création du DataFrame
+            prices_df = pd.DataFrame(regional_prices, index=dates)
+            
+            # Graphique des prix régionaux
+            fig = go.Figure()
+            colors = ['blue', 'red', 'green', 'orange']
+            
+            for i, region in enumerate(regions):
+                fig.add_trace(go.Scatter(
+                    x=dates, y=prices_df[region],
+                    mode='lines', name=region,
+                    line=dict(color=colors[i], width=2)
+                ))
+            
+            fig.update_layout(
+                title="Prix Gaz Naturel par Région",
+                xaxis_title="Date",
+                yaxis_title="Prix ($/MMBtu)",
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Matrice des spreads
+            st.subheader("📈 Matrice des Spreads")
+            
+            current_prices = prices_df.iloc[-1]
+            spread_matrix = np.zeros((len(regions), len(regions)))
+            
+            for i in range(len(regions)):
+                for j in range(len(regions)):
+                    spread_matrix[i][j] = current_prices.iloc[i] - current_prices.iloc[j]
+            
+            spread_df = pd.DataFrame(spread_matrix, index=regions, columns=regions)
+            
+            fig_spread = px.imshow(
+                spread_df,
+                labels=dict(color="Spread ($/MMBtu)"),
+                color_continuous_scale="RdBu_r",
+                aspect="auto"
+            )
+            fig_spread.update_layout(title="Matrice des Spreads Actuels")
+            st.plotly_chart(fig_spread, use_container_width=True)
+            
+            # Opportunités d'arbitrage identifiées
+            st.subheader("🎯 Opportunités Identifiées")
+            
+            # Calcul des meilleures opportunités
+            opportunities = []
+            for i in range(len(regions)):
+                for j in range(len(regions)):
+                    if i != j:
+                        spread = current_prices.iloc[j] - current_prices.iloc[i]
+                        # Estimation simple des coûts de transport
+                        if "Asie" in regions[j]:
+                            transport_cost_est = 2.0
+                        elif "US" in regions[i] and ("UK" in regions[j] or "NL" in regions[j]):
+                            transport_cost_est = 1.5
+                        else:
+                            transport_cost_est = 1.0
+                        
+                        net_spread = spread - transport_cost_est
+                        if net_spread > 0.5:  # Seuil de rentabilité
+                            opportunities.append({
+                                'Achat': regions[i],
+                                'Vente': regions[j],
+                                'Spread Brut': spread,
+                                'Coût Transport': transport_cost_est,
+                                'Spread Net': net_spread,
+                                'ROI Estimé': (net_spread / current_prices.iloc[i]) * 100
+                            })
+            
+            if opportunities:
+                opportunities_df = pd.DataFrame(opportunities)
+                opportunities_df = opportunities_df.sort_values('Spread Net', ascending=False)
+                
+                st.dataframe(
+                    opportunities_df.style.format({
+                        'Spread Brut': '${:.2f}',
+                        'Coût Transport': '${:.2f}',
+                        'Spread Net': '${:.2f}',
+                        'ROI Estimé': '{:.1f}%'
+                    }),
+                    use_container_width=True
+                )
+            else:
+                st.info("Aucune opportunité d'arbitrage rentable identifiée actuellement")
+
+# Section informations et déploiement
+st.sidebar.markdown("---")
+st.sidebar.subheader("📋 Guide de Déploiement")
+
+with st.sidebar.expander("🚀 Déploiement GitHub → Streamlit"):
+    st.markdown("""
+    **Étapes de déploiement:**
+    
+    1. **Créer le repository GitHub**
+    ```bash
+    git init
+    git add .
+    git commit -m "Initial commit"
+    git remote add origin <your-repo-url>
+    git push -u origin main
+    ```
+    
+    2. **Créer requirements.txt**
+    ```
+    streamlit>=1.28.0
+    numpy>=1.24.0
+    pandas>=2.0.0
+    plotly>=5.15.0
+    scipy>=1.11.0
+    ```
+    
+    3. **Connecter à Streamlit Cloud**
+    - Aller sur share.streamlit.io
+    - Connecter votre GitHub
+    - Sélectionner le repository
+    - Déployer automatiquement
+    """)
+
+with st.sidebar.expander("⚙️ Structure du Projet"):
+    st.markdown("""
+    ```
+    commodiphys/
+    ├── app.py                 # Application principale
+    ├── requirements.txt       # Dépendances
+    ├── .streamlit/
+    │   └── config.toml       # Configuration
+    └── README.md             # Documentation
+    ```
+    """)
+
+with st.sidebar.expander("📊 Fonctionnalités"):
+    st.markdown("""
+    **Modules Disponibles:**
+    - 🔥 Thermodynamique des Prix Énergie
+    - ⚡ Modèle de Diffusion Métaux
+    - 🌊 Dynamique des Flux Logistiques
+    - 📊 Optimisation Portfolio Physique
+    - 🎯 Arbitrage Géographique
+    
+    **Modèles Physiques:**
+    - Processus d'Ornstein-Uhlenbeck
+    - Diffusion avec sauts
+    - Équilibre thermodynamique
+    - Optimisation de Markowitz
+    """)
+
+# Footer avec informations
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #666666;'>
+<p><strong>CommodiPhys v1.0</strong> - Application de Trading Physique des Matières Premières</p>
+<p>Modèles physiques appliqués • Optimisation quantitative • Analyse des risques</p>
+<p>🔗 <em>Déployez sur GitHub → Streamlit Cloud pour une version live</em></p>
+</div>
+""", unsafe_allow_html=True)
